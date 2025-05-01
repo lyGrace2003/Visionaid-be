@@ -32,6 +32,24 @@ class_names = [
     "hair drier", "toothbrush"
 ]
 
+def box_iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    inter_width = max(0, xB - xA)
+    inter_height = max(0, yB - yA)
+    inter_area = inter_width * inter_height
+    boxA_area = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxB_area = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    union_area = boxA_area + boxB_area - inter_area
+    return inter_area / union_area if union_area > 0 else 0
+
+def bbox_from_polygon(polygon):
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
 @csrf_exempt
 def upload_image(request):
     """Receives image, performs object detection, applies bounding boxes, and performs OCR."""
@@ -56,9 +74,34 @@ def upload_image(request):
         original_img = cv2.imread(str(temp_image_path))
         if original_img is None:
             raise Exception("Failed to read image")
-
+        
         # Perform object detection
         detections = object_detection_view(str(temp_image_path))
+
+        if not detections:
+            detections = [] 
+
+        # Get all detected object boxes
+        object_boxes = [d["box"] for d in detections]
+        
+        #Perform full image OCR
+        full_ocr_results = reader.readtext(original_img)
+
+        # Filter out OCR texts that overlap with detected objects
+        filtered_full_ocr = []
+        for (bbox, text, conf) in full_ocr_results:
+            if conf < 0.5:
+                continue
+            ocr_box = bbox_from_polygon(bbox)
+            overlaps = any(box_iou(ocr_box, det_box) > 0.3 for det_box in object_boxes)
+            if not overlaps:
+                filtered_full_ocr.append({
+                    "box": ocr_box,
+                    "text": text,
+                    "confidence": float(conf)
+                })
+
+        print("Full OCR (outside object regions):", filtered_full_ocr)
 
         # Annotate image and perform OCR per detection
         for detection in detections:
@@ -79,16 +122,61 @@ def upload_image(request):
                 for _, text, ocr_conf in ocr_result if ocr_conf > 0.5
             ]
 
-        # Optional: Remove entries with missing label or bad OCR
-        detections = [
-            det for det in detections
-            if det["label"] != Ellipsis and ("ocr_text" not in det or det["ocr_text"] != Ellipsis)
-        ]
+            # Draw bounding boxes for OCR results within detected objects (white color)
+            for ocr in detection["ocr_text"]:
+                ocr_box = [x1, y1, x2, y2]  # Use the object's bounding box as a reference
+                cv2.rectangle(original_img, (ocr_box[0], ocr_box[1]), (ocr_box[2], ocr_box[3]), (255, 255, 255), 2)
+            
+        # Draw bounding boxes for full-page OCR results (blue color)
+        for ocr_entry in filtered_full_ocr:
+            ocr_box = ocr_entry["box"]
+            cv2.rectangle(original_img, (ocr_box[0], ocr_box[1]), (ocr_box[2], ocr_box[3]), (255, 0, 0), 2)
 
-        # Scene description
-        scene_description = generate_scene_description(detections)
+        aggregated_results = []
+        
+        for det in detections:
+            aggregated_results.append({
+                "label": det["label"],
+                "box": det["box"],
+                "confidence": det["confidence"],
+                "ocr_text": det.get("ocr_text", [])
+            })
+        
+        # Add full-page OCR results (outside object boxes)
+        for ocr_entry in filtered_full_ocr:
+            aggregated_results.append({
+                "label": "ocr",
+                "box": ocr_entry["box"],
+                "confidence": ocr_entry["confidence"],
+                "ocr_text": [ { "text": ocr_entry["text"], "confidence": ocr_entry["confidence"] } ]
+            })
+        
+        print("aggregated results", aggregated_results)
 
-        save_scene_description_to_db(scene_description, detections)
+        # Ensure that bounding box coordinates are integers
+        for result in aggregated_results:
+            result['box'] = list(map(int, result['box']))  # Explicitly cast to int
+            # If there are any other NumPy-specific types, ensure they are converted too
+            if isinstance(result['confidence'], np.int32) or isinstance(result['confidence'], np.float32):
+                result['confidence'] = float(result['confidence'])  # Convert confidence to float if necessary
+
+
+        try:
+            scene_description = generate_scene_description(aggregated_results)
+        except Exception as e:
+            print("Scene generation error:", e)
+            scene_description = None  # Ensure it's set to None in case of an error
+
+        if scene_description:
+            try:
+                save_scene_description_to_db(scene_description, aggregated_results)
+            except Exception as e:
+                print("Error saving to DB:", e)
+                return JsonResponse({"error": "Failed to save to database."}, status=500)
+        else:
+            return JsonResponse({"error": "Scene description generation failed."}, status=500)
+
+
 
         # Save processed image
         upload_dir = Path(settings.MEDIA_ROOT) / 'uploads'
@@ -168,27 +256,37 @@ def save_scene_description_to_db(scene_description, detections):
         )
         scene_log_id = cursor.fetchone()[0]
 
-        # Insert object detections
         for det in detections:
             x1, y1, x2, y2 = det["box"]
+
+            if det["label"] == "ocr":
+                # Skip object detection and save to ocr_results directly
+                for ocr in det.get("ocr_text", []):
+                    cursor.execute(
+                        """
+                        INSERT INTO ocr_results (scene_log_id, box_x1, box_y1, box_x2, box_y2, text, confidence)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [scene_log_id, x1, y1, x2, y2, ocr["text"], ocr["confidence"]]
+                    )
+                continue
+
+            # Otherwise, save to object_detections + ocr_results for object-related OCR
             cursor.execute(
                 """
                 INSERT INTO object_detections (scene_log_id, label, box_x1, box_y1, box_x2, box_y2, confidence)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 [scene_log_id, det["label"], x1, y1, x2, y2, det["confidence"]]
             )
+            object_detection_id = cursor.fetchone()[0]
 
-        # Insert OCR results
-        for det in detections:
-            if "ocr_text" in det:
-                for ocr in det["ocr_text"]:
-                    cursor.execute(
-                        """
-                        INSERT INTO ocr_results (scene_log_id, text, confidence)
-                        VALUES (%s, %s, %s)
-                        """,
-                        [scene_log_id, ocr["text"], ocr["confidence"]]
-                    )
-
-
+            for ocr in det.get("ocr_text", []):
+                cursor.execute(
+                    """
+                    INSERT INTO ocr_results (scene_log_id, box_x1, box_y1, box_x2, box_y2, text, confidence)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [scene_log_id, x1, y1, x2, y2, ocr["text"], ocr["confidence"]]
+                )

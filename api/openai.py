@@ -6,26 +6,27 @@ api_key = settings.OPENAI_API_KEY
 
 def generate_scene_description(detected_objects):
     prompt = f"""
-    Given the following detected objects and their bounding boxes, generate a clear, natural paragraph describing the scene,
+    Given the following detected items and their bounding boxes, generate a clear, natural paragraph describing the scene,
     designed to assist a visually impaired individual.
 
     Instructions:
-    - Focus on describing only the most relevant and clearly visible objects. Ignore distant, small, or unimportant objects.
+    - Items with label "ocr" represent text detected in the scene (e.g., signs, posters, or labels). These are not physical objects, but text that should be *read* or described as part of a sign or written information.
+    - Items with other labels represent physical objects.
+    - Focus on describing only the most relevant and clearly visible physical objects. Ignore distant, small, or unimportant ones.
+    - Mention the content of OCR text naturally, such as “a sign reads 'Caution'" or “a banner says 'Welcome Students'".
     - Use spatial terms such as 'to the left', 'in front of', 'behind', 'near', and 'far' to describe object positions relative to one another.
-    - Do NOT mention any coordinates, bounding boxes, numbers, or percentages unless it is text detected from OCR.
-    - If an object contains detected text, mention the text naturally in the description.
+    - Do NOT mention any coordinates, bounding boxes, numbers, or percentages unless it is part of the OCR text.
     - Start with the most prominent features of the scene, then describe other relevant objects based on their spatial relationships.
-    - Write the description as a concise and natural-sounding paragraph without mentioning confidence scores, coordinates, or detection statistics.
+    - Write the description as a concise and natural-sounding paragraph. Avoid listing items mechanically or including detection metadata like confidence scores.
 
-    Each object contains:
-    - label (object class)
-    - box ([x1, y1, x2, y2] image coordinates)
-    - ocr_text (if available)
+    Each item contains:
+    - label: 'ocr' (if it is detected text) or a physical object class
+    - box: [x1, y1, x2, y2] image coordinates
+    - ocr_text: (if available, contains the detected text and confidence)
 
-    Detected Objects:
+    Detected Items:
     {json.dumps(detected_objects)}
     """
-
     try:
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
