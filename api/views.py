@@ -13,8 +13,12 @@ from django.http import JsonResponse
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from api.openai import generate_scene_description
+from datetime import datetime
+import pytz
 
 from django.conf import settings
+
+ph_time = datetime.now(pytz.timezone("Asia/Manila"))
 
 model_path = r"C:\Users\User\OneDrive\Desktop\thesis\VisionAid\object_detection\yolov8s.pt"
 yolo_model = YOLO(model_path)
@@ -251,8 +255,8 @@ def save_scene_description_to_db(scene_description, detections):
     with connection.cursor() as cursor:
         # Insert into scene_logs
         cursor.execute(
-            "INSERT INTO scene_logs (scene_description) VALUES (%s) RETURNING id",
-            [scene_description]
+            "INSERT INTO scene_logs (scene_description, created_at) VALUES (%s, %s) RETURNING id",
+            [scene_description, ph_time]
         )
         scene_log_id = cursor.fetchone()[0]
 

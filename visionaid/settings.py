@@ -94,7 +94,7 @@ WSGI_APPLICATION = 'visionaid.wsgi.application'
 DATABASES = {
      'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'visionaid',
+        'NAME': 'visionaid_db',
         'USER': 'postgres',
         'PASSWORD': 'ImgoingtoNZ',
         'HOST': 'localhost',
