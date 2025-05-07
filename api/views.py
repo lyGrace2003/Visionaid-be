@@ -13,8 +13,12 @@ from django.http import JsonResponse
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from api.openai import generate_scene_description
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from api.models import SceneLog  # replace with your model
+from api.serializers import SceneLogSerializer  # you'll define this
 
 from django.conf import settings
 
@@ -294,3 +298,27 @@ def save_scene_description_to_db(scene_description, detections):
                     """,
                     [scene_log_id, x1, y1, x2, y2, ocr["text"], ocr["confidence"]]
                 )
+        # Insert OCR results
+        for det in detections:
+            if "ocr_text" in det:
+                for ocr in det["ocr_text"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO ocr_results (scene_log_id, text, confidence)
+                        VALUES (%s, %s, %s)
+                        """,
+                        [scene_log_id, ocr["text"], ocr["confidence"]]
+                    )
+                    
+
+@api_view(['GET'])
+def get_scene_logs(request):
+    five_days_ago = ph_time - timedelta(days=5)
+
+    logs = SceneLog.objects.filter(created_at__gte=five_days_ago, created_at__lte=ph_time).order_by('-created_at')
+
+    serializer = SceneLogSerializer(logs, many=True)
+    return Response(serializer.data)
+   
+
+
