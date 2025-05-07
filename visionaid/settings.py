@@ -40,7 +40,7 @@ if DEBUG is None:
 #ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '172.29.4.165','*']
 
 #mine
-ALLOWED_HOSTS = ['testserver','127.0.0.1', 'localhost', '192.168.1.4', '192.168.1.10']
+ALLOWED_HOSTS = ['testserver','127.0.0.1', 'localhost', '192.168.1.28', '192.168.1.10']
 
 # Application definition
 
@@ -96,7 +96,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'visionaid',
         'USER': 'postgres',
-        'PASSWORD': 'ImgoingtoNZ',
+        'PASSWORD': '859919',
         'HOST': 'localhost',
         'PORT': '5432',
     }

@@ -16,7 +16,7 @@ from api.openai import generate_scene_description
 
 from django.conf import settings
 
-model_path = r"C:\Users\User\OneDrive\Desktop\thesis\VisionAid\object_detection\yolov8s.pt"
+model_path = r"C:\Users\Joan\yolov8s.pt"
 yolo_model = YOLO(model_path)
 reader = easyocr.Reader(['en'])
 
@@ -190,5 +190,17 @@ def save_scene_description_to_db(scene_description, detections):
                         """,
                         [scene_log_id, ocr["text"], ocr["confidence"]]
                     )
+                    
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import SceneLog  # replace with your model
+from .serializers import SceneLogSerializer  # you'll define this
+
+@api_view(['GET'])
+def get_scene_logs(request):
+    logs = SceneLog.objects.order_by('-timestamp')[:5]
+    serializer = SceneLogSerializer(logs, many=True)
+    return Response(serializer.data)
+   
 
 
