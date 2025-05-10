@@ -41,7 +41,7 @@ class_names = [
 ]
 
 def box_iou(boxA, boxB):
-    xA = max(boxA[0], boxB[0])
+    xA = max(boxA[0], boxB[0]) 
     yA = max(boxA[1], boxB[1])
     xB = min(boxA[2], boxB[2])
     yB = min(boxA[3], boxB[3])
@@ -54,8 +54,8 @@ def box_iou(boxA, boxB):
     return inter_area / union_area if union_area > 0 else 0
 
 def bbox_from_polygon(polygon):
-    xs = [p[0] for p in polygon]
-    ys = [p[1] for p in polygon]
+    xs = [p[0] for p in polygon]  #extract x coordinates
+    ys = [p[1] for p in polygon]  # extract y coordinates
     return [min(xs), min(ys), max(xs), max(ys)]
 
 @csrf_exempt
@@ -98,13 +98,13 @@ def upload_image(request):
         # Filter out OCR texts that overlap with detected objects
         filtered_full_ocr = []
         for (bbox, text, conf) in full_ocr_results:
-            if conf < 0.5:
+            if conf < 0.5: #skip if confidence less than 50% 
                 continue
-            ocr_box = bbox_from_polygon(bbox)
-            overlaps = any(box_iou(ocr_box, det_box) > 0.3 for det_box in object_boxes)
+            ocr_box = bbox_from_polygon(bbox) #convert polygon to bounding box 
+            overlaps = any(box_iou(ocr_box, det_box) > 0.3 for det_box in object_boxes) 
             if not overlaps:
                 filtered_full_ocr.append({
-                    "box": ocr_box,
+                    "box": list(map(int, ocr_box)),
                     "text": text,
                     "confidence": float(conf)
                 })
@@ -237,15 +237,22 @@ def object_detection_view(image_path):
     for det in results[0].boxes.data.tolist():  # x1, y1, x2, y2, conf, class_id
         x1, y1, x2, y2, conf, class_id = det
 
-        if conf < 0.4:  # Optional: confidence threshold
+        if conf < 0.4:  # skip if confidence less than 40%
             continue
 
         class_id = int(class_id)
-        label = class_names[class_id] if class_id < len(class_names) else str(class_id)
+        label = class_names[class_id] if class_id < len(class_names) else str(class_id)  #convert classid from detection to labels
+        #If class_id is out of range (very rare), it just returns the ID as a string.
+
+        if len([x1, y1, x2, y2]) == 4:
+            box_x1, box_y1, box_x2, box_y2 = int(x1), int(y1), int(x2), int(y2)
+        else:
+            # Default or handle missing bounding box data
+            box_x1, box_y1, box_x2, box_y2 = 0, 0, 0, 0  # Defaults if invalid/missing
 
         raw_detections.append({
             "label": label,
-            "box": [int(x1), int(y1), int(x2), int(y2)],
+            "box": [box_x1, box_y1, box_x2, box_y2],
             "confidence": round(conf, 2)
         })
 
@@ -288,8 +295,6 @@ def save_scene_description_to_db(scene_description, detections):
                 """,
                 [scene_log_id, det["label"], x1, y1, x2, y2, det["confidence"]]
             )
-            object_detection_id = cursor.fetchone()[0]
-
             for ocr in det.get("ocr_text", []):
                 cursor.execute(
                     """
@@ -298,17 +303,6 @@ def save_scene_description_to_db(scene_description, detections):
                     """,
                     [scene_log_id, x1, y1, x2, y2, ocr["text"], ocr["confidence"]]
                 )
-        # Insert OCR results
-        for det in detections:
-            if "ocr_text" in det:
-                for ocr in det["ocr_text"]:
-                    cursor.execute(
-                        """
-                        INSERT INTO ocr_results (scene_log_id, text, confidence)
-                        VALUES (%s, %s, %s)
-                        """,
-                        [scene_log_id, ocr["text"], ocr["confidence"]]
-                    )
                     
 
 @api_view(['GET'])

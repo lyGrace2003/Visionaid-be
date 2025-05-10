@@ -40,7 +40,7 @@ if DEBUG is None:
 #ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '172.29.4.165','*']
 
 #mine
-ALLOWED_HOSTS = ['testserver','127.0.0.1', 'localhost', '192.168.1.4', '192.168.1.10']
+ALLOWED_HOSTS = ['testserver', '172.29.2.190', 'localhost', '192.168.1.4', '192.168.1.10']
 
 # Application definition
 
