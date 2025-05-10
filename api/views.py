@@ -25,20 +25,19 @@ from django.conf import settings
 ph_time = datetime.now(pytz.timezone("Asia/Manila"))
 
 model_path = r"C:\Users\User\OneDrive\Desktop\thesis\VisionAid\object_detection\yolov8s.pt"
+class_names_file_path = r"C:\Users\User\OneDrive\Desktop\thesis\VisionAid\object_detection\classes.txt"
 yolo_model = YOLO(model_path)
 reader = easyocr.Reader(['en'])
 
-class_names = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-    "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-    "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-    "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-    "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-    "hair drier", "toothbrush"
-]
+# def load_class_names(file_path):
+#     """Load class names from a given file."""
+#     class_names = []
+#     with open(file_path, 'r') as file:
+#         for line in file:
+#             class_id, class_name = line.strip().split(',')
+#             class_names.append(class_name)
+#         print("class")
+#     return class_names
 
 def box_iou(boxA, boxB):
     xA = max(boxA[0], boxB[0]) 
@@ -82,9 +81,12 @@ def upload_image(request):
         original_img = cv2.imread(str(temp_image_path))
         if original_img is None:
             raise Exception("Failed to read image")
+        original_height, original_width = original_img.shape[:2]
+        print("Original Image Shape:", original_img.shape)
+        
         
         # Perform object detection
-        detections = object_detection_view(str(temp_image_path))
+        detections = object_detection_view(str(temp_image_path),original_height,original_width)
 
         if not detections:
             detections = [] 
@@ -94,6 +96,8 @@ def upload_image(request):
         
         #Perform full image OCR
         full_ocr_results = reader.readtext(original_img)
+
+        print("Full OCR (not filtered):", full_ocr_results)
 
         # Filter out OCR texts that overlap with detected objects
         filtered_full_ocr = []
@@ -192,7 +196,6 @@ def upload_image(request):
         processed_image_path = upload_dir / image.name
         cv2.imwrite(str(processed_image_path), original_img)
 
-        print(f"data: {detections}")
         print(f"image_url: {settings.MEDIA_URL}uploads/{image.name}")
 
         return JsonResponse({
@@ -229,21 +232,31 @@ def preprocess_image(image_path, img_size=640):
 
     return img
 
-def object_detection_view(image_path):
+def object_detection_view(image_path,original_height,original_width):
     """Performs object detection using YOLOv8 model and returns labeled detections."""
-    results = yolo_model(image_path)
+    results = yolo_model.predict(image_path, conf=0.4)
+
+    result = results[0]  # The first image result in the list
+    
+    # Access the class names and boxes from the result
+    class_names = result.names 
+    
+    # class_names = load_class_names(class_names_file_path)
 
     raw_detections = []
-    for det in results[0].boxes.data.tolist():  # x1, y1, x2, y2, conf, class_id
+    for det in result.boxes.data.tolist():  # x1, y1, x2, y2, conf, class_id
         x1, y1, x2, y2, conf, class_id = det
 
-        if conf < 0.4:  # skip if confidence less than 40%
-            continue
+        # # Scale the bounding boxes back to the original image size
+        # x1 = int(x1 * original_width)
+        # y1 = int(y1 * original_height)
+        # x2 = int(x2 * original_width)
+        # y2 = int(y2 * original_height)
 
         class_id = int(class_id)
-        label = class_names[class_id] if class_id < len(class_names) else str(class_id)  #convert classid from detection to labels
-        #If class_id is out of range (very rare), it just returns the ID as a string.
+        label = class_names[class_id] if class_id < len(class_names) else str(class_id)  # convert class_id to label
 
+        # Ensure valid bounding box data
         if len([x1, y1, x2, y2]) == 4:
             box_x1, box_y1, box_x2, box_y2 = int(x1), int(y1), int(x2), int(y2)
         else:

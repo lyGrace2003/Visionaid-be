@@ -4,69 +4,63 @@ import json
 from collections import defaultdict
 from django.conf import settings
 
+from api.vector_store import get_embedding, collection
+
 api_key = settings.OPENAI_API_KEY 
 
-# Load room knowledge base (RAG retrieval source)
-def load_room_object_map():
-    json_path = settings.BASE_DIR / 'room_objects.json'
-    with open(json_path, "r") as f:
-        return json.load(f)
+# # Load room knowledge base (RAG retrieval source)
+# def load_room_object_map():
+#     json_path = settings.BASE_DIR / 'room_objects.json'
+#     with open(json_path, "r") as f:
+#         return json.load(f)
 
-# Converts from room -> objects to object -> rooms
-def invert_room_map(room_map):
-    obj_to_room = {}
-    for room, objects in room_map.items():
-        for obj in objects:
-            obj_to_room.setdefault(obj, []).append(room)
-    return obj_to_room
-
-room_map = load_room_object_map()
-OBJECT_TO_ROOM = invert_room_map(room_map)
-
-def guess_room(detected_objects):
-    room_counts = {}  # Track the number of objects detected for each room
-    
-    room_context = {}
-    for obj in detected_objects:
-        obj_label = obj['label']
-        
-        if obj_label in OBJECT_TO_ROOM:  # Only consider objects in the mapping
-            for room in OBJECT_TO_ROOM[obj_label]:
-                room_counts[room] = room_counts.get(room, 0) + 1
-
-    # Handle case where no room is identified
-    if not room_counts:
-        return "Unknown room"
-    
-    # Find room with the highest number of objects detected
-    most_detected_room = max(room_counts, key=room_counts.get)
-    return most_detected_room
+# room_map = load_room_object_map()
+# room_knowledge = json.dumps(room_map, indent=2)
 
 def generate_scene_description(detected_objects):
-    room = guess_room(detected_objects)
-    print("Room:", room)
+    detected_objects_str = [obj['label'] for obj in detected_objects]  # Extract only the label
+    query_text = f"Detected objects: {', '.join(detected_objects_str)}"
 
+    query_embedding = get_embedding(query_text)
+
+    results = collection.query(query_embeddings=[query_embedding], n_results=3)
+    top_docs = "\n".join(results["documents"][0])
+
+    detected_object = json.dumps(detected_objects, indent=2)
     prompt = f"""
-     You are given a list of detected items in a scene captured by a camera. Your task is to generate a clear, helpful, and natural paragraph describing the scene for a visually impaired user.
+    You are given a list of detected items in a scene captured by a camera. Your task is to generate a clear, helpful, and natural paragraph describing the scene for a visually impaired user.
 
-    {f"If the room is not 'an unknown room', first state 'The scene appears to be in {room} based on the detected objects' else dont say anything about what kind of room it is"}
+    Here is background knowledge of what objects are typically found in each room:
+    
+    {top_docs}
 
-    Rules and Instructions:
-    - Each item includes:
-        - label: the object's class (e.g., "person", "sign", "bag", or "ocr")
-        - box: [x1, y1, x2, y2] coordinates of the bounding boxW
-        - ocr_text: (optional) text found within that object area
-    - Items with label "ocr" represent text detected in the scene that is *not* associated with any physical object. Do **not** call these signs or banners. Instead, mention them only as standalone text, such as “a text reading 'Students' is visible.”
-    - If an item has a label other than "ocr" and contains `ocr_text`, assume it is a physical object with text on it (e.g., a sign or label). In this case, describe it naturally like: “a sign reads 'Caution'” or “a banner says 'Welcome'.”
-    - **Even if a physical object has no associated text, still describe it if it is clearly visible and relevant** (e.g., “a person is standing near the wall” or “a chair is positioned in front of the desk”).
-    - Prioritize clear, spatial descriptions: use terms like 'to the left', 'in front of', 'nearby', 'at the back', etc.
-    - Focus only on relevant and clearly visible objects. Ignore clutter or distant items.
-    - Do **not** include raw coordinates, bounding box data, or confidence scores in the description.
-    - Do not guess objects or infer extra context beyond what is provided.
-    - Avoid listing items. Instead, write one natural paragraph that gives an intuitive sense of the scene.
+    You may use this knowledge **only to infer which room the scene is most likely in**, based on the objects actually detected.
 
-    Detected Items:
-    {json.dumps(detected_objects, indent=2)}
+    ### CRITICAL RULES:
+
+    - DO NOT describe any object unless it is explicitly listed in the Detected Items section below.
+    - DO NOT add, imagine, or guess objects even if they are commonly found in the inferred room.
+    - DO NOT describe the room's furniture, or decorations unless such elements are detected.
+    - DO NOT include information based on background knowledge unless it is reflected in the Detected Items.
+    - DO NOT simply list objects. Form one fluid, descriptive paragraph.
+    - DO NOT include coordinates, scores, or mention objects that are not in the list.
+    - DO NOT invent scene context. Stay strictly grounded in the Detected Items.
+
+    ### INSTRUCTIONS:
+
+    - Begin with: “The scene appears to be in [room] based on the detected objects,” if the room is identifiable. Otherwise, say: “The scene's location is unclear based on the detected objects.”
+    - Describe only the objects that appear in the Detected Items list.
+    - Each detected item includes:
+        - `label`: the object's class (e.g., "person", "sign", "bag", or "ocr")
+        - `box`: [x1, y1, x2, y2] bounding box (do not include this in output)
+        - `ocr_text`: (optional) text in that area
+    - If other objects contain `ocr_text`, say: “a [label] reads '[text]'.”
+    - If a detected label is "ocr", this is a standalone text. Do **not** call it a sign or banner. Just say, for example: “a text reading 'Welcome' is visible.”
+    - Use spatial language when describing object positions (e.g., "to the left", "in front of").
+    - Write in one paragraph, natural and informative, but strictly factual.
+
+    ### Detected Items:
+    {detected_object}
     """
     try:
         client = openai.OpenAI(api_key=api_key)
